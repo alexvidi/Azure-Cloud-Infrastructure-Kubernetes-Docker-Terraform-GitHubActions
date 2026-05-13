@@ -209,8 +209,20 @@ Note:
 
 Note:
 
-- the Deployment manifest keeps a default image reference for direct `kubectl apply` usage
-- the GitHub Actions deploy workflow overrides that image with the validated commit SHA during CI/CD
+- the Deployment manifest contains a fallback image reference for direct `kubectl apply` usage
+- the GitHub Actions deploy workflow replaces that fallback image with the image built and scanned from the validated commit SHA
+
+Required GitHub Secrets:
+
+- `AZURE_CLIENT_ID`
+- `AZURE_TENANT_ID`
+- `AZURE_SUBSCRIPTION_ID`
+- `ACR_NAME`
+- `AKS_RESOURCE_GROUP`
+- `AKS_NAME`
+- `GRAFANA_ADMIN_USER`
+- `GRAFANA_ADMIN_PASSWORD`
+- `ALERTMANAGER_SMTP_PASSWORD`
 
 ### Observability
 
@@ -248,7 +260,7 @@ The repository includes baseline controls that are justified by the current work
 
 - non-root container runtime
 - pod and container `securityContext`
-- Pod Security Admission in `restricted` mode
+- Pod Security Admission in `restricted` mode for the application namespace
 - `allowPrivilegeEscalation: false`
 - dropped Linux capabilities
 - resource requests and limits
@@ -261,11 +273,33 @@ The repository includes baseline controls that are justified by the current work
 
 ## How to Run
 
-### 1. Build and Push the Image
+### 1. Prepare Terraform Remote State
+
+The Terraform backend in [infra/backend.tf](infra/backend.tf) stores state in Azure Blob Storage. Before running `terraform init`, create or reuse the backend resources defined there:
+
+- resource group: `alexdevops99-tfstate-rg`
+- storage account: `alexdevops99tfstate01`
+- container: `tfstate`
+- state key: `aks-fastapi.tfstate`
+
+Example bootstrap commands:
 
 ```bash
-docker build -t <acr>.azurecr.io/market-quote-api:v1 app
-docker push <acr>.azurecr.io/market-quote-api:v1
+az group create \
+  --name alexdevops99-tfstate-rg \
+  --location eastus
+
+az storage account create \
+  --name alexdevops99tfstate01 \
+  --resource-group alexdevops99-tfstate-rg \
+  --location eastus \
+  --sku Standard_LRS \
+  --kind StorageV2
+
+az storage container create \
+  --name tfstate \
+  --account-name alexdevops99tfstate01 \
+  --auth-mode login
 ```
 
 ### 2. Provision Azure Infrastructure
@@ -275,9 +309,26 @@ cd infra
 terraform init
 terraform plan
 terraform apply
+cd ..
 ```
 
-### 3. Deploy to Kubernetes
+### 3. Build and Push the Image
+
+```bash
+docker build -t alexdevops99acr.azurecr.io/market-quote-api:v1 app
+docker push alexdevops99acr.azurecr.io/market-quote-api:v1
+```
+
+### 4. Connect kubectl to AKS
+
+```bash
+az aks get-credentials \
+  --resource-group alexdevops99-rg \
+  --name alexdevops99-aks \
+  --overwrite-existing
+```
+
+### 5. Deploy to Kubernetes
 
 ```bash
 kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.15.1/deploy/static/provider/cloud/deploy.yaml
@@ -304,7 +355,7 @@ Notes:
 - the CI/CD workflow installs or updates `ingress-nginx` before applying the application manifests
 - direct `kubectl apply` usage should install the same ingress controller first, as shown above
 - the current `NetworkPolicy` assumes the ingress controller runs in the `ingress-nginx` namespace; adjust the namespace selector if your installation uses another namespace
-- direct `kubectl apply` uses the default image reference defined in `k8s/deployment.yaml`
+- the Deployment manifest contains a fallback image reference for direct `kubectl apply` usage; that image tag must exist in ACR for manual deployments
 - the CI/CD workflow updates that image to the validated commit SHA after applying the manifests
 - the CI/CD workflow also creates the `grafana-admin` Secret from GitHub Actions secrets before applying manifests
 - the CI/CD workflow also creates the `alertmanager-smtp` Secret from the `ALERTMANAGER_SMTP_PASSWORD` GitHub secret before applying manifests
@@ -312,11 +363,11 @@ Notes:
 - Prometheus and Alertmanager are restarted after manifest apply so updated alerting configuration is loaded
 - the raw monitoring stack is included in the `k8s/monitoring-*.yaml`, `k8s/prometheus*.yaml`, `k8s/alertmanager*.yaml`, and `k8s/grafana*.yaml` manifests and deploys into the `monitoring` namespace
 
-### 4. Access the Application
+### 6. Access the Application
 
 After the Ingress Controller assigns a public IP, the API is reachable through that IP because `k8s/ingress.yaml` does not require a host name. This keeps the demo simple and avoids depending on a custom domain. In a production-style setup, a DNS record would normally point a domain name to the ingress public IP, and TLS would be configured on the Ingress.
 
-### 5. Access Observability
+### 7. Access Observability and Alerting
 
 Prometheus, Alertmanager, and Grafana are deployed into the `monitoring` namespace by the raw monitoring manifests under `k8s/`.
 
