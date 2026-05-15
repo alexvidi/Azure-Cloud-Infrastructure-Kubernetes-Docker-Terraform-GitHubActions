@@ -138,7 +138,7 @@ Main modules:
 - `monitoring`
   Creates Log Analytics and monitoring-related resources.
 
-The composition happens in [infra/main.tf](infra/main.tf), and AKS receives the `AcrPull` role assignment so the cluster can pull images from ACR.
+The composition happens in [infra/main.tf](infra/main.tf). Two role assignments are managed there: `AcrPull` on ACR for the AKS kubelet identity, and `Azure Kubernetes Service RBAC Cluster Admin` on AKS for the GitHub Actions Service Principal.
 
 ### Kubernetes
 
@@ -266,6 +266,7 @@ The repository includes baseline controls that are justified by the current work
 - resource requests and limits
 - `NetworkPolicy` with denied egress by default
 - AKS managed identity plus `AcrPull` for image pulls
+- GitHub Actions Service Principal granted `Azure Kubernetes Service RBAC Cluster Admin` via Azure RBAC instead of `--admin` bypass
 - Grafana admin credentials externalized into a Kubernetes Secret
 - Alertmanager SMTP credentials externalized into a Kubernetes Secret
 - Trivy image scanning in CI
